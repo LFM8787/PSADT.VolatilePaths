@@ -8,6 +8,7 @@
 	Extension Exit Codes:
 	70201: New-PendingFileRenameOperation - Administrative rights are needed to register movement (rename) after reboot.
 	70202: New-PendingFileRenameOperation - Administrative rights are needed to register delete after reboot.
+	70212: New-PendingFileRenameOperation - The source folder is included in the system SpecialFolder enumeration. Manipulation could compromise system stability.
 	70203: Move-FileAfterReboot - Failed to register movement (rename) of file after reboot.
 	70204: Move-FolderAfterReboot - Failed to register movement (rename) of folder after reboot.
 	70205: Remove-FileAfterReboot - Failed to register delete of file after reboot.
@@ -19,8 +20,8 @@
 	70211: New-RegistryKeyVolatile - Failed to create volatile registry key.
 
 	Author:  Leonardo Franco Maragna
-	Version: 1.0
-	Date:    2023/02/08
+	Version: 1.0.1
+	Date:    2023/03/30
 #>
 [CmdletBinding()]
 Param (
@@ -34,8 +35,8 @@ Param (
 ## Variables: Extension Info
 $VolatilePathsExtName = "VolatilePathsExtension"
 $VolatilePathsExtScriptFriendlyName = "Volatile Paths Extension"
-$VolatilePathsExtScriptVersion = "1.0"
-$VolatilePathsExtScriptDate = "2023/02/08"
+$VolatilePathsExtScriptVersion = "1.0.1"
+$VolatilePathsExtScriptDate = "2023/03/30"
 $VolatilePathsExtSubfolder = "PSADT.VolatilePaths"
 $VolatilePathsExtConfigFileName = "VolatilePathsConfig.xml"
 $VolatilePathsExtCustomTypesName = "VolatilePathsExtension.cs"
@@ -44,8 +45,8 @@ $VolatilePathsExtCustomTypesName = "VolatilePathsExtension.cs"
 [IO.FileInfo]$dirVolatilePathsExtFiles = Join-Path -Path $scriptRoot -ChildPath $VolatilePathsExtSubfolder
 [IO.FileInfo]$VolatilePathsConfigFile = Join-Path -Path $dirVolatilePathsExtFiles -ChildPath $VolatilePathsExtConfigFileName
 [IO.FileInfo]$VolatilePathsCustomTypesSourceCode = Join-Path -Path $dirVolatilePathsExtFiles -ChildPath $VolatilePathsExtCustomTypesName
-if (-not $VolatilePathsConfigFile.Exists) { throw "$($VolatilePathsExtScriptFriendlyName) XML configuration file [$VolatilePathsConfigFile] not found." }
-if (-not $VolatilePathsCustomTypesSourceCode.Exists) { throw "$($VolatilePathsExtScriptFriendlyName) custom types source code file [$VolatilePathsCustomTypesSourceCode] not found." }
+if (-not (Test-Path -LiteralPath $VolatilePathsConfigFile -ErrorAction SilentlyContinue)) { throw "$($VolatilePathsExtScriptFriendlyName) XML configuration file [$VolatilePathsConfigFile] not found." }
+if (-not (Test-Path -LiteralPath $VolatilePathsCustomTypesSourceCode -ErrorAction SilentlyContinue)) { throw "$($VolatilePathsExtScriptFriendlyName) custom types source code file [$VolatilePathsCustomTypesSourceCode] not found." }
 
 ## Import variables from XML configuration file
 [Xml.XmlDocument]$xmlVolatilePathsConfigFile = Get-Content -LiteralPath $VolatilePathsConfigFile -Encoding UTF8
@@ -68,8 +69,22 @@ catch {}
 #  Get Volatile Paths General Options
 [Xml.XmlElement]$xmlVolatilePathsOptions = $xmlVolatilePathsConfig.VolatilePaths_Options
 $configVolatilePathsGeneralOptions = [PSCustomObject]@{
-	ExitScriptOnError = Invoke-Expression -Command 'try { [boolean]::Parse([string]($xmlVolatilePathsOptions.ExitScriptOnError)) } catch { $false }'
+	ExitScriptOnError               = Invoke-Expression -Command 'try { [boolean]::Parse([string]($xmlVolatilePathsOptions.ExitScriptOnError)) } catch { $false }'
+	AllowSpecialFoldersManipulation = Invoke-Expression -Command 'try { [boolean]::Parse([string]($xmlVolatilePathsOptions.AllowSpecialFoldersManipulation)) } catch { $false }'
 }
+
+## Reusable ScriptBlocks called by functions
+#  Creates an empty Dictionary Data
+[scriptblock]$VolatilePathsGetSpecialFolders = {
+	$SpecialFolders = @()
+	[Environment+SpecialFolder].GetEnumNames() | ForEach-Object {
+		if (-not [string]::IsNullOrWhiteSpace([Environment]::GetFolderPath($_))) {
+			$SpecialFolders += [Environment]::GetFolderPath($_)
+		}
+	}
+	$SpecialFolders = $SpecialFolders | Select-Object -Unique
+}
+#endregion
 
 #endregion
 ##*=============================================
@@ -94,6 +109,8 @@ Function New-PendingFileRenameOperation {
 		fully qualified path name of the destination file or directory.
 	.PARAMETER ReplaceExisting
 		If specified and DestinationPath already exists, the original content will be overwritten.
+	.PARAMETER AllowSpecialFoldersManipulation
+		Allow manipulation of Special Folders enumerated by the Operating System.
 	.PARAMETER ContinueOnError
 		Continue if an error is encountered. Default is: $true.
 	.PARAMETER DisableFunctionLogging
@@ -122,7 +139,7 @@ Function New-PendingFileRenameOperation {
 		[ValidateNotNullorEmpty()]
 		[IO.FileInfo]$DestinationPath,
 		[switch]$ReplaceExisting,
-		[Parameter(Mandatory = $false)]
+		[switch]$AllowSpecialFoldersManipulation,
 		[boolean]$ContinueOnError = $true,
 		[switch]$DisableFunctionLogging
 	)
@@ -153,6 +170,23 @@ Function New-PendingFileRenameOperation {
 				if (-not $ContinueOnError) {
 					if ($configVolatilePathsGeneralOptions.ExitScriptOnError) { Exit-Script -ExitCode 70202 }
 					throw "Administrative rights are needed to register delete of path [$Path] after reboot."
+				}
+				return $false
+			}
+		}
+
+		## Warns the user if the source folder is a special folder
+		Invoke-Command -ScriptBlock $VolatilePathsGetSpecialFolders -NoNewScope
+
+		if ($Path -in $SpecialFolders) {
+			if ($AllowSpecialFoldersManipulation -or $configVolatilePathsGeneralOptions.AllowSpecialFoldersManipulation) {
+				if (-not ($DisableFunctionLogging)) { Write-Log -Message "The source folder [$Path] is included in the system SpecialFolder enumeration. Continuing since AllowSpecialFoldersManipulation is permitted." -Severity 2 -Source ${CmdletName} }
+			}
+			else {
+				Write-Log -Message "The source folder [$Path] is included in the system SpecialFolder enumeration. Manipulation could compromise system stability." -Severity 3 -Source ${CmdletName}
+				if (-not $ContinueOnError) {
+					if ($configVolatilePathsGeneralOptions.ExitScriptOnError) { Exit-Script -ExitCode 70212 }
+					throw "The source folder [$Path] is included in the system SpecialFolder enumeration. Manipulation could compromise system stability."
 				}
 				return $false
 			}
@@ -245,16 +279,16 @@ Function Move-FileAfterReboot {
 	}
 	Process {
 		## Warns the user if the source file does not exist
-		if (-not $Path.Exists) {
+		if (-not (Test-Path -LiteralPath $Path -ErrorAction SilentlyContinue)) {
 			if (-not ($DisableFunctionLogging)) { Write-Log -Message "The source file [$Path] does not exist." -Severity 2 -Source ${CmdletName} }
 		}
-		elseif (-not (Test-Path -Path $Path -PathType Leaf)) {
+		elseif (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
 			if (-not ($DisableFunctionLogging)) { Write-Log -Message "The source path given [$Path] does not seem to be a file." -Severity 2 -Source ${CmdletName} }
 		}
 
 		## Warns the user if the destination file exists
-		if ($DestinationPath.Exists) {
-			if (-not (Test-Path -Path $DestinationPath -PathType Leaf)) {
+		if (Test-Path -LiteralPath $DestinationPath -ErrorAction SilentlyContinue) {
+			if (-not (Test-Path -LiteralPath $DestinationPath -PathType Leaf)) {
 				if (-not ($DisableFunctionLogging)) { Write-Log -Message "The destination path given [$DestinationPath] does not seem to be a file." -Severity 2 -Source ${CmdletName} }
 			}
 			
@@ -302,6 +336,8 @@ Function Move-FolderAfterReboot {
 		fully qualified path name of the destination folder.
 	.PARAMETER ReplaceExisting
 		If specified and DestinationPath already exists, the original content will be overwritten.
+	.PARAMETER AllowSpecialFoldersManipulation
+		Allow manipulation of Special Folders enumerated by the Operating System.
 	.PARAMETER ContinueOnError
 		Continue if an error is encountered. Default is: $true.
 	.PARAMETER DisableFunctionLogging
@@ -330,7 +366,7 @@ Function Move-FolderAfterReboot {
 		[ValidateNotNullorEmpty()]
 		[IO.FileInfo]$DestinationPath,
 		[switch]$ReplaceExisting,
-		[Parameter(Mandatory = $false)]
+		[switch]$AllowSpecialFoldersManipulation,
 		[boolean]$ContinueOnError = $true,
 		[switch]$DisableFunctionLogging
 	)
@@ -345,16 +381,16 @@ Function Move-FolderAfterReboot {
 	}
 	Process {
 		## Warns the user if the source folder does not exist
-		if (-not $Path.Exists) {
+		if (-not (Test-Path -LiteralPath $Path -ErrorAction SilentlyContinue)) {
 			if (-not ($DisableFunctionLogging)) { Write-Log -Message "The source folder [$Path] does not exist." -Severity 2 -Source ${CmdletName} }
 		}
-		elseif (-not (Test-Path -Path $Path -PathType Container)) {
+		elseif (-not (Test-Path -LiteralPath $Path -PathType Container)) {
 			if (-not ($DisableFunctionLogging)) { Write-Log -Message "The source path given [$Path] does not seem to be a folder." -Severity 2 -Source ${CmdletName} }
 		}
 
 		## Warns the user if the destination folder exists
-		if ($DestinationPath.Exists) {
-			if (-not (Test-Path -Path $DestinationPath -PathType Container)) {
+		if (Test-Path -LiteralPath $DestinationPath -ErrorAction SilentlyContinue) {
+			if (-not (Test-Path -LiteralPath $DestinationPath -PathType Container)) {
 				if (-not ($DisableFunctionLogging)) { Write-Log -Message "The destination path given [$DestinationPath] does not seem to be a folder." -Severity 2 -Source ${CmdletName} }
 			}
 
@@ -436,10 +472,10 @@ Function Remove-FileAfterReboot {
 	}
 	Process {
 		## Warns the user if the source file does not exist
-		if (-not $Path.Exists) {
+		if (-not (Test-Path -LiteralPath $Path -ErrorAction SilentlyContinue)) {
 			if (-not ($DisableFunctionLogging)) { Write-Log -Message "The source file [$Path] does not exist." -Severity 2 -Source ${CmdletName} }
 		}
-		elseif (-not (Test-Path -Path $Path -PathType Leaf)) {
+		elseif (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
 			if (-not ($DisableFunctionLogging)) { Write-Log -Message "The source path given [$Path] does not seem to be a file." -Severity 2 -Source ${CmdletName} }
 		}
 
@@ -475,6 +511,8 @@ Function Remove-FolderAfterReboot {
 		Queue a folder to be deleted after reboot.
 	.PARAMETER Path
 		Fully qualified path name of the folder.
+	.PARAMETER AllowSpecialFoldersManipulation
+		Allow manipulation of Special Folders enumerated by the Operating System.
 	.PARAMETER ContinueOnError
 		Continue if an error is encountered. Default is: $true.
 	.PARAMETER DisableFunctionLogging
@@ -499,6 +537,7 @@ Function Remove-FolderAfterReboot {
 		[Parameter(Mandatory = $true)]
 		[IO.FileInfo]$Path,
 		[Parameter(Mandatory = $false)]
+		[switch]$AllowSpecialFoldersManipulation,
 		[boolean]$ContinueOnError = $true,
 		[switch]$DisableFunctionLogging
 	)
@@ -512,11 +551,11 @@ Function Remove-FolderAfterReboot {
 		if ($configToolkitLogDebugMessage) { $DisableFunctionLogging = $false }
 	}
 	Process {
-		## Warns the user if the source file does not exist
-		if (-not $Path.Exists) {
+		## Warns the user if the source folder does not exist
+		if (-not (Test-Path -LiteralPath $Path -ErrorAction SilentlyContinue)) {
 			if (-not ($DisableFunctionLogging)) { Write-Log -Message "The source folder [$Path] does not exist." -Severity 2 -Source ${CmdletName} }
 		}
-		elseif (-not (Test-Path -Path $Path -PathType Container)) {
+		elseif (-not (Test-Path -LiteralPath $Path -PathType Container)) {
 			if (-not ($DisableFunctionLogging)) { Write-Log -Message "The source path given [$Path] does not seem to be a folder." -Severity 2 -Source ${CmdletName} }
 		}
 

@@ -7,14 +7,16 @@
 -->
 	<!--Configuration File Details-->
 	<Config_File>
-		<Config_Version>1.0</Config_Version>
-		<Config_Date>2023/02/08</Config_Date>
+		<Config_Version>1.0.1</Config_Version>
+		<Config_Date>2023/03/30</Config_Date>
 	</Config_File>
 
 	<!--Volatile Paths General Options-->
 	<VolatilePaths_Options>
 		<ExitScriptOnError>False</ExitScriptOnError>
 		<!-- [True/False] - Calls the Exit-Script function to perform cleanup actions instead of only throw an error. -->
+		<AllowSpecialFoldersManipulation>False</AllowSpecialFoldersManipulation>
+		<!-- [True/False] - Allows the manipulation of system SpecialFolders. -->
 	</VolatilePaths_Options>
 	<!--Volatile Paths General Options-->
 </VolatilePaths_Config>

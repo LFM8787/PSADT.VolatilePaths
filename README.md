@@ -1,4 +1,4 @@
-# PSADT.VolatilePaths 1.0
+# PSADT.VolatilePaths
 Extension for PowerShell App Deployment Toolkit to create volatile registry keys and move/delete files/folder on reboot using native methods.
 
 ## Features
@@ -7,6 +7,7 @@ Extension for PowerShell App Deployment Toolkit to create volatile registry keys
 - Overwrites target file/folder if specified
 - Creates volatile registry keys that exists only in RAM loaded registry.
 - Native methods used to perform the tasks.
+- Warns the user if the source folder is a special folder
 - *ContinueOnError* and *ExitScriptOnError* support.
 
 ## Disclaimer
@@ -47,6 +48,7 @@ New-RegistryKeyVolatile -Key 'HKEY_LOCAL_MACHINE\SOFTWARE\Application_Temp'
 |:----------:|:--------------------|:-|
 |70201|New-PendingFileRenameOperation|Administrative rights are needed to register movement (rename) after reboot.|
 |70202|New-PendingFileRenameOperation|Administrative rights are needed to register delete after reboot.|
+|70212|New-PendingFileRenameOperation|The source folder is included in the system SpecialFolder enumeration. Manipulation could compromise system stability.|
 |70203|Move-FileAfterReboot|Failed to register movement (rename) of file after reboot.|
 |70204|Move-FolderAfterReboot|Failed to register movement (rename) of folder after reboot.|
 |70205|Remove-FileAfterReboot|Failed to register delete of file after reboot.|
@@ -58,7 +60,7 @@ New-RegistryKeyVolatile -Key 'HKEY_LOCAL_MACHINE\SOFTWARE\Application_Temp'
 |70211|New-RegistryKeyVolatile|Failed to create volatile registry key.|
 
 ## How to Install
-#### 1. Download and copy into Toolkit folder.
+#### 1. Download and extract into Toolkit folder.
 #### 2. Edit *AppDeployToolkitExtensions.ps1* file and add the following lines.
 #### 3. Create an empty array (only once if multiple extensions):
 ```PowerShell
